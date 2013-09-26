@@ -7,6 +7,10 @@
 #define ABS(a)     (((a) < 0) ? -(a) : (a))
 
 #define WAYPOINT_GRANULARITY 2
+#define EARTH_RADIUS 6371000
+
+#define PI 3.1415926535
+#define RAD_PER_ARC (PI*(1.0/180/60/60))
 
 /******************
  * SRTM functions *
@@ -64,23 +68,41 @@ static inline uint16_t read_lat_long(int32_t east, int32_t north) {
  * Waypoint *
  ************/
 
+static inline double dist_per_arcsecond_h(int32_t north) {
+  return EARTH_RADIUS * cos(north * RAD_PER_ARC) * RAD_PER_ARC;
+}
+static inline double dist_per_arcsecond_v() {
+  return EARTH_RADIUS * RAD_PER_ARC;
+}
+
 void straight_line(int32_t s_east, int32_t s_north, int32_t e_east,
-    int32_t e_north) {
+    int32_t e_north, double *s_dist) {
   double delta_east = e_east - s_east;
   double delta_north = e_north - s_north;
   double delta = sqrt(delta_east * delta_east + delta_north + delta_north);
+
+  // haversine formula for great-circle distance
+  double a = pow(sin(delta_north * RAD_PER_ARC), 2) +
+      pow(sin(delta_east * RAD_PER_ARC), 2) *
+      cos(s_north * RAD_PER_ARC) * cos(e_north * RAD_PER_ARC);
+  double c = 2 * atan2(sqrt(a), sqrt(1-a));
+  double dist = EARTH_RADIUS * c;
+
   uint32_t num_steps = delta / WAYPOINT_GRANULARITY;
   for (uint32_t i = 0; i < num_steps; ++i) {
     int32_t east = s_east + (delta_east * i / num_steps);
     int32_t north = s_north + (delta_north * i / num_steps);
     uint16_t result = read_lat_long(east, north);
-    printf("%d\n", result);
+    double cur_dist = *s_dist + dist * i / num_steps;
+    printf("%f, %d\n", cur_dist, result);
   }
+  *s_dist += dist;
 }
 
 void read_waypoint(FILE *file) {
   uint32_t num_points;
   fscanf(file, "%d\n", &num_points);
+  double s_dist = 0;
   int32_t prev_east, prev_north, cur_east, cur_north;
   for (int i = 0; i < num_points; ++i) {
     char cs[2];
@@ -100,7 +122,7 @@ void read_waypoint(FILE *file) {
       cur_east = -cur_east;
     }
     if (i > 0) {
-      straight_line(prev_east, prev_north, cur_east, cur_north);
+      straight_line(prev_east, prev_north, cur_east, cur_north, &s_dist);
     }
   }
 }
